@@ -7,7 +7,7 @@ use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
-use windows::core::{Interface, PCSTR};
+use windows::core::{IUnknown, Interface, PCSTR};
 
 use super::HostShader;
 use super::container::SigElement;
@@ -66,28 +66,44 @@ impl Host {
     /// The default adapter, or WARP with `warp` (or `VICTORY_WARP=1`).
     pub fn new(warp: bool) -> Result<Self, String> {
         let warp = warp || std::env::var("VICTORY_WARP").is_ok_and(|v| v == "1");
-        // SAFETY: plain D3D12/DXGI calls with valid out pointers.
+        // Select the Agility runtime before any D3D12 free function or device
+        // is used. The game host and these test hosts share the same process-wide
+        // SDK activation and root-signature serializer routing.
+        static SDK_LOGGED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        SDK_LOGGED.get_or_init(|| match crate::agility::state() {
+            crate::agility::State::Loaded { version, dir, .. } => {
+                eprintln!("D3D12 Agility SDK v{version} loaded from {}", dir.display());
+            }
+            crate::agility::State::Unavailable(reason) => {
+                eprintln!("D3D12 Agility SDK unavailable ({reason}); using inbox runtime");
+            }
+            crate::agility::State::NotFound => {
+                eprintln!("no app-local D3D12 Agility SDK found; using inbox runtime");
+            }
+        });
+        // SAFETY: plain D3D12/DXGI calls with valid descriptions and COM out-pointers.
         unsafe {
             // `VICTORY_D3D12_DEBUG`: the debug layer, whose messages a
             // refused pipeline's error then carries.
-            if std::env::var_os("VICTORY_D3D12_DEBUG").is_some() {
-                let mut debug: Option<ID3D12Debug> = None;
-                if D3D12GetDebugInterface(&mut debug).is_ok()
-                    && let Some(debug) = debug
-                {
-                    debug.EnableDebugLayer();
-                }
+            if std::env::var_os("VICTORY_D3D12_DEBUG").is_some()
+                && let Ok(debug) = crate::agility::configuration_interface::<ID3D12Debug>(
+                    &CLSID_D3D12Debug,
+                )
+            {
+                debug.EnableDebugLayer();
             }
-            let mut device: Option<ID3D12Device> = None;
-            if warp {
+            let device = if warp {
                 let factory: IDXGIFactory4 =
                     CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).map_err(err)?;
                 let adapter: IDXGIAdapter = factory.EnumWarpAdapter().map_err(err)?;
-                D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device).map_err(err)?;
+                crate::agility::create_device(&adapter, D3D_FEATURE_LEVEL_12_0).map_err(err)?
             } else {
-                D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device).map_err(err)?;
-            }
-            let device = device.ok_or("no device")?;
+                crate::agility::create_device(
+                    None::<&IUnknown>,
+                    D3D_FEATURE_LEVEL_12_0,
+                )
+                .map_err(err)?
+            };
             let mut sm = D3D12_FEATURE_DATA_SHADER_MODEL {
                 HighestShaderModel: D3D_SHADER_MODEL_6_6,
             };

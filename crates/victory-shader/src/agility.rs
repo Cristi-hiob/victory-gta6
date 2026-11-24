@@ -20,7 +20,7 @@ use windows::core::{GUID, IUnknown, Interface, PCSTR, Param};
 pub const ENV: &str = "VICTORY_D3D12_DIR";
 
 #[derive(Debug)]
-pub(crate) enum State {
+pub enum State {
     Loaded {
         factory: ID3D12DeviceFactory,
         version: u32,
@@ -292,11 +292,11 @@ fn create_factory(
 }
 
 /// Initialize once, before any D3D12 free function or device is used.
-pub(crate) fn state() -> &'static State {
+pub fn state() -> &'static State {
     STATE.get_or_init(init)
 }
 
-pub(crate) fn create_device<P>(
+pub fn create_device<P>(
     adapter: P,
     feature_level: D3D_FEATURE_LEVEL,
 ) -> windows::core::Result<ID3D12Device>
@@ -317,7 +317,7 @@ where
     device.ok_or_else(windows::core::Error::empty)
 }
 
-pub(crate) fn configuration_interface<T: Interface>(
+pub fn configuration_interface<T: Interface>(
     class_id: &GUID,
 ) -> windows::core::Result<T> {
     match state() {

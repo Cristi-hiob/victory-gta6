@@ -500,14 +500,14 @@ pub(crate) fn host() -> Option<&'static Host> {
 fn create() -> windows::core::Result<Host> {
     // Activate Agility before calling any D3D12 free function. In particular,
     // ApplyToGlobalState redirects the root-signature serializer to D3D12Core.
-    match crate::agility::state() {
-        crate::agility::State::Loaded { version, dir, .. } => {
+    match victory_shader::agility::state() {
+        victory_shader::agility::State::Loaded { version, dir, .. } => {
             tracing::info!(version, path = %dir.display(), "D3D12 Agility SDK loaded");
         }
-        crate::agility::State::Unavailable(reason) => {
+        victory_shader::agility::State::Unavailable(reason) => {
             tracing::warn!(%reason, "D3D12 Agility SDK unavailable; using inbox runtime");
         }
-        crate::agility::State::NotFound => {
+        victory_shader::agility::State::NotFound => {
             tracing::info!("no app-local D3D12 Agility SDK found; using inbox runtime");
         }
     }
@@ -517,7 +517,7 @@ fn create() -> windows::core::Result<Host> {
         let debug =
             cfg!(feature = "diagnostics") && std::env::var_os("VICTORY_D3D12_DEBUG").is_some();
         if debug {
-            let layer = match crate::agility::configuration_interface::<ID3D12Debug>(
+            let layer = match victory_shader::agility::configuration_interface::<ID3D12Debug>(
                 &CLSID_D3D12Debug,
             ) {
                 Ok(layer) => {
@@ -550,7 +550,7 @@ fn create() -> windows::core::Result<Host> {
         // Diagnostics: device-removed data (the command that faulted, the
         // faulting address), read when the device is removed.
         if dred_on()
-            && let Ok(dred) = crate::agility::configuration_interface::<
+            && let Ok(dred) = victory_shader::agility::configuration_interface::<
                 ID3D12DeviceRemovedExtendedDataSettings,
             >(&CLSID_D3D12DeviceRemovedExtendedData)
         {
@@ -565,9 +565,9 @@ fn create() -> windows::core::Result<Host> {
         {
             let adapter = warp_adapter()?;
             tracing::info!("host device on the software adapter (WARP)");
-            crate::agility::create_device(&adapter, D3D_FEATURE_LEVEL_12_0)?
+            victory_shader::agility::create_device(&adapter, D3D_FEATURE_LEVEL_12_0)?
         } else {
-            crate::agility::create_device(None::<&IUnknown>, D3D_FEATURE_LEVEL_12_0)?
+            victory_shader::agility::create_device(None::<&IUnknown>, D3D_FEATURE_LEVEL_12_0)?
         };
         // `VICTORY_D3D12_BACKGROUND=0`: the runtime's background work (the
         // driver compiling shaders again on the "D3D Background Thread"s,
