@@ -674,7 +674,13 @@ mod tests {
             let mut context = Aligned16(std::mem::zeroed());
             RtlCaptureContext(&mut context.0);
             let mut walked = [null_mut(); 8];
-            let n = RtlCaptureStackBackTrace(0, 8, walked.as_mut_ptr(), null_mut());
+            // Windows can sporadically return zero frames from this API even
+            // when the current stack is valid (OS-37394205). Retry so this
+            // test measures our unwinder rather than that system failure.
+            let n = (0..16)
+                .map(|_| RtlCaptureStackBackTrace(0, 8, walked.as_mut_ptr(), null_mut()))
+                .find(|&n| n != 0)
+                .unwrap_or(0);
             (unwind(context.0), walked[..usize::from(n)].to_vec())
         };
         // Frame 0 differs (two call sites in this function); callers agree.
