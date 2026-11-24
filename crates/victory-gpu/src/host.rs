@@ -16,7 +16,7 @@ use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::{Interface, PCWSTR, w};
+use windows::core::{IUnknown, Interface, PCWSTR, w};
 
 /// Resource states without the console's own bits (compression hints from
 /// bit 25 up), which the host rejects.
