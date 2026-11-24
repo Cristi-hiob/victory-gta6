@@ -567,7 +567,7 @@ fn create() -> windows::core::Result<Host> {
             tracing::info!("host device on the software adapter (WARP)");
             crate::agility::create_device(&adapter, D3D_FEATURE_LEVEL_12_0)?
         } else {
-            crate::agility::create_device(None::<&IDXGIAdapter>, D3D_FEATURE_LEVEL_12_0)?
+            crate::agility::create_device(None::<&IUnknown>, D3D_FEATURE_LEVEL_12_0)?
         };
         // `VICTORY_D3D12_BACKGROUND=0`: the runtime's background work (the
         // driver compiling shaders again on the "D3D Background Thread"s,
