@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 
 use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL;
 use windows::Win32::Graphics::Direct3D12::*;
+use windows::Win32::Graphics::Dxgi::IDXGIAdapter;
 use windows::core::{GUID, IUnknown, Interface, PCSTR, Param};
 
 /// Environment variable overriding the Agility SDK directory.
@@ -301,7 +302,7 @@ pub(crate) fn create_device<P>(
     feature_level: D3D_FEATURE_LEVEL,
 ) -> windows::core::Result<ID3D12Device>
 where
-    P: Param<IUnknown>,
+    P: Param<IDXGIAdapter>,
 {
     let mut device: Option<ID3D12Device> = None;
     match state() {
