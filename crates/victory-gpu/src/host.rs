@@ -49,6 +49,8 @@ pub(crate) struct Host {
     dsvs: ID3D12DescriptorHeap,
     dsv_size: u32,
     next_dsv: AtomicU32,
+    /// Whether this runtime and adapter support SM 6.6 bindless heap indexing.
+    supports_direct_heap_indexing: bool,
     /// With `VICTORY_D3D12_DEBUG` set (diagnostics builds): the debug
     /// layer's messages.
     messages: Option<ID3D12InfoQueue>,
@@ -496,17 +498,37 @@ pub(crate) fn host() -> Option<&'static Host> {
 }
 
 fn create() -> windows::core::Result<Host> {
+    // Activate Agility before calling any D3D12 free function. In particular,
+    // ApplyToGlobalState redirects the root-signature serializer to D3D12Core.
+    match crate::agility::state() {
+        crate::agility::State::Loaded { version, dir, .. } => {
+            tracing::info!(version, path = %dir.display(), "D3D12 Agility SDK loaded");
+        }
+        crate::agility::State::Unavailable(reason) => {
+            tracing::warn!(%reason, "D3D12 Agility SDK unavailable; using inbox runtime");
+        }
+        crate::agility::State::NotFound => {
+            tracing::info!("no app-local D3D12 Agility SDK found; using inbox runtime");
+        }
+    }
     // SAFETY: plain D3D12 object creation with valid descriptions.
     unsafe {
         // The debug layer only in builds with diagnostics.
         let debug =
             cfg!(feature = "diagnostics") && std::env::var_os("VICTORY_D3D12_DEBUG").is_some();
         if debug {
-            let mut layer: Option<ID3D12Debug> = None;
-            match D3D12GetDebugInterface(&mut layer) {
-                Ok(()) => layer.iter().for_each(|l| l.EnableDebugLayer()),
-                Err(e) => tracing::warn!(error = %e, "no D3D12 debug layer"),
-            }
+            let layer = match crate::agility::configuration_interface::<ID3D12Debug>(
+                &CLSID_D3D12Debug,
+            ) {
+                Ok(layer) => {
+                    layer.EnableDebugLayer();
+                    Some(layer)
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "no D3D12 debug layer");
+                    None
+                }
+            };
             // GPU-based validation (`VICTORY_D3D12_GBV`): out-of-range
             // descriptor heap indices and the like become messages naming
             // the command instead of page faults. Without state tracking
@@ -527,27 +549,26 @@ fn create() -> windows::core::Result<Host> {
         }
         // Diagnostics: device-removed data (the command that faulted, the
         // faulting address), read when the device is removed.
-        if dred_on() {
-            let mut dred: Option<ID3D12DeviceRemovedExtendedDataSettings> = None;
-            if D3D12GetDebugInterface(&mut dred).is_ok()
-                && let Some(dred) = dred
-            {
-                dred.SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
-                dred.SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
-            }
+        if dred_on()
+            && let Ok(dred) = crate::agility::configuration_interface::<
+                ID3D12DeviceRemovedExtendedDataSettings,
+            >(&CLSID_D3D12DeviceRemovedExtendedData)
+        {
+            dred.SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            dred.SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
         }
-        let mut device: Option<ID3D12Device> = None;
         // Diagnostics: the software adapter, on which a shader's wild access
         // is an access violation in this process (a crash report with the
         // address and instruction) instead of a GPU fault and driver reset.
-        if cfg!(feature = "diagnostics") && std::env::var_os("VICTORY_D3D12_WARP").is_some() {
+        let device = if cfg!(feature = "diagnostics")
+            && std::env::var_os("VICTORY_D3D12_WARP").is_some()
+        {
             let adapter = warp_adapter()?;
-            D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device)?;
             tracing::info!("host device on the software adapter (WARP)");
+            crate::agility::create_device(&adapter, D3D_FEATURE_LEVEL_12_0)?
         } else {
-            D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device)?;
-        }
-        let device = device.ok_or_else(windows::core::Error::empty)?;
+            crate::agility::create_device(None::<&IDXGIAdapter>, D3D_FEATURE_LEVEL_12_0)?
+        };
         // `VICTORY_D3D12_BACKGROUND=0`: the runtime's background work (the
         // driver compiling shaders again on the "D3D Background Thread"s,
         // for minutes after pipelines were made or loaded) is switched off.
@@ -577,6 +598,30 @@ fn create() -> windows::core::Result<Host> {
             tracing::info!(min = o1.WaveLaneCountMin, max = o1.WaveLaneCountMax, "host wave lanes");
             victory_shader::emit::set_host_max_wave(o1.WaveLaneCountMax);
         }
+        let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS::default();
+        let mut model = D3D12_FEATURE_DATA_SHADER_MODEL {
+            HighestShaderModel: D3D_SHADER_MODEL_6_6,
+        };
+        let options_ok = device.CheckFeatureSupport(
+            D3D12_FEATURE_D3D12_OPTIONS,
+            (&raw mut options).cast(),
+            size_of_val(&options) as u32,
+        ).is_ok();
+        let model_ok = device.CheckFeatureSupport(
+            D3D12_FEATURE_SHADER_MODEL,
+            (&raw mut model).cast(),
+            size_of_val(&model) as u32,
+        ).is_ok();
+        let supports_direct_heap_indexing = options_ok
+            && model_ok
+            && options.ResourceBindingTier.0 >= D3D12_RESOURCE_BINDING_TIER_3.0
+            && model.HighestShaderModel.0 >= D3D_SHADER_MODEL_6_6.0;
+        tracing::info!(
+            shader_model = model.HighestShaderModel.0,
+            resource_binding_tier = options.ResourceBindingTier.0,
+            supports_direct_heap_indexing,
+            "host directly indexed descriptor heap support"
+        );
         let messages = debug
             .then(|| device.cast::<ID3D12InfoQueue>().ok())
             .flatten();
@@ -615,6 +660,7 @@ fn create() -> windows::core::Result<Host> {
             dsvs,
             dsv_size,
             next_dsv: AtomicU32::new(0),
+            supports_direct_heap_indexing,
             messages,
             next_rtv: AtomicU32::new(0),
             presenter: Mutex::new(None),
@@ -2727,6 +2773,12 @@ fn hand_back(back: &[Declared]) {
 }
 
 impl Host {
+    /// Whether directly indexed CBV/SRV/UAV and sampler heaps are supported.
+    /// The root signature flags require both Shader Model 6.6 and binding tier 3.
+    pub(crate) fn supports_direct_heap_indexing(&self) -> bool {
+        self.supports_direct_heap_indexing
+    }
+
     /// Whether the host runs mesh shaders at shader model 6.6 (translated
     /// mesh shaders need both); logged once.
     pub(crate) fn mesh_shaders(&self) -> bool {

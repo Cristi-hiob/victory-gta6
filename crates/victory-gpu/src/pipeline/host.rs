@@ -801,6 +801,17 @@ fn root_signature(
     samplers: &[D3D12_STATIC_SAMPLER_DESC],
     compute: bool,
 ) -> windows::core::Result<(ID3D12RootSignature, Vec<u8>)> {
+    let Some(host) = host() else {
+        return Err(windows::core::Error::empty());
+    };
+    if !host.supports_direct_heap_indexing() {
+        tracing::warn!(
+            "directly indexed descriptor heaps require Shader Model 6.6 and resource binding tier 3; check the D3D12 Agility SDK runtime"
+        );
+        return Err(windows::core::Error::from(
+            windows::Win32::Foundation::E_NOINTERFACE,
+        ));
+    }
     let input = if compute {
         D3D12_ROOT_SIGNATURE_FLAG_NONE
     } else {
@@ -901,6 +912,10 @@ mod tests {
         let Some(host) = host() else {
             return; // no host GPU here
         };
+        if !host.supports_direct_heap_indexing() {
+            eprintln!("direct heap indexing unavailable; skipped (requires SM 6.6 and binding tier 3)");
+            return;
+        }
         let Some(dxc) = dxc() else {
             eprintln!("no PC dxc.exe; skipped");
             return;

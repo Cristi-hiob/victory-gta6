@@ -69,6 +69,25 @@ Each is described in a comment where it is read.
 - Around 24 GB of memory is in use during play.
 - Many changes here are specific to this title and this GPU, and some are marked `shortcut:` in the code where they approximate what the console does.
 
+## Windows 10 Direct3D 12 runtime
+
+This fork uses Shader Model 6.6 and directly indexed descriptor heaps. On
+Windows 10, install the Microsoft Direct3D 12 Agility SDK (the app does not
+bundle Microsoft's runtime DLLs). Set `VICTORY_D3D12_DIR` to the directory
+containing `D3D12Core.dll` before launching VIctory. The same variable must
+be set in the terminal that runs `cargo test`; for example:
+
+```powershell
+$env:VICTORY_D3D12_DIR='C:\Path\To\D3D12'
+cargo test --workspace
+```
+
+Without an Agility SDK, VIctory falls back to the Windows inbox D3D12 runtime.
+On Windows 10 that runtime may not support SM 6.6 or bindless root-signature
+flags, so world-rendering pipelines that require them will be refused. Startup
+logs report the SDK version/path and the device's shader model and resource
+binding tier.
+
 Everything below this line is upstream VIctory's own README, unchanged; its
 status section describes upstream, not this fork.
 
